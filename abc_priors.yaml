@@ -1,0 +1,181 @@
+# ABC Prior Configuration for IS6110 Niche Model (DFE)
+# 
+# Calibrated from:
+#   Tree length: 2,748,125 per-genome substitutions
+#   Median terminal branch: 3,390 
+#   Median internal branch: 657
+#   N tips: 10,000
+#   Observed births (ASR): ~2,800
+#   Median copy number: 15 (range 1–36)
+
+# =============================================================================
+# GENOMIC NICHE PARAMETERS
+# =============================================================================
+
+p_neutral:
+  description: "Fraction of genomic sites compatible with insertions (fitness=0)"
+  distribution: "uniform"
+  lower: 0.05
+  upper: 0.5
+  rationale: |
+    ...
+
+gamma_shape:
+  description: "Shape parameter of gamma DFE for deleterious sites"
+  distribution: "uniform"
+  lower: 0.5
+  upper: 2.5
+  rationale: |
+    Governs the concentration of fitness effect distribution.
+    
+    Lower values (0.5): Many sites with mild effects, few highly deleterious.
+    Higher values (2.5): Tighter concentration; most sites have similar costs.
+    Moderate range (0.5–2.5) avoids extreme distributions.
+    
+    If gamma_shape=1.0, gamma_scale=0.5 → mean fitness ≈ 0.5 (5% cost/copy).
+
+gamma_scale:
+  description: "Scale parameter of gamma DFE (severity of fitness costs)"
+  distribution: "uniform"
+  lower: 0.1
+  upper: 1.0
+  rationale: |
+    Controls absolute magnitude of fitness effects (cost per insertion).
+    
+    Mean fitness effect = gamma_shape × gamma_scale.
+    
+    Lower bound (0.1): Mild costs (~0.5–1% per insertion).
+    Upper bound (1.0): Moderate costs (~2–5% per insertion).
+    
+    Biological interpretation: Each IS insertion at a deleterious site 
+    reduces genome fitness by ~1–5%.
+
+# =============================================================================
+# TRANSPOSITION DYNAMICS
+# =============================================================================
+
+r_birth:
+  description: "Transposition rate per occupied copy per per-genome-wide substitution"
+  distribution: "uniform_log"  # Use log-uniform for better prior coverage
+  lower: 1.36e-05
+  upper: 3.40e-04
+  rationale: |
+    Empirically calibrated from observed births / (tree length × typical CN):
+    
+      2,800 births / (2,748,125 substitutions × 15 copies) ≈ 6.79e-05
+    
+    Prior width ±5-fold around central estimate to capture uncertainty in:
+    - Copy number heterogeneity (range 1–36)
+    - Potential variation in transposition rates across lineages
+    - Model misspecification (continuous vs. discrete insertions)
+    
+    Expected births per median terminal branch:
+      λ = r_birth × median_CN × median_terminal_branch
+      λ ≈ 6.79e-5 × 15 × 3390 ≈ 3.5 births/branch
+    
+    Prior range gives λ ≈ 0.7–17 births/median-terminal-branch, 
+    accommodating diverse equilibrium scenarios.
+
+r_loss:
+  description: "Purging rate coefficient (× fitness effect)"
+  distribution: "uniform_log"
+  lower: 1e-04  # Allow nearly-neutral evolution
+  upper: 5e-03
+  equilibrium_target: "r_loss ≈ (0.1–1.0) × r_birth × mean_fitness"
+  rationale: |
+    Controls strength of purifying selection against inserted copies.
+    
+    Deletion rate at site i = r_loss × fitness[i].
+    
+    If p_neutral is high, most deletions occur at tolerated sites.
+    If p_neutral is low, purging against deleterious sites is key.
+    
+    For equilibrium copy number ~15:
+      Expected r_loss ≈ 0.1–1.0 × r_birth × <fitness>
+      If <fitness> ≈ 0.5:  r_loss ≈ 3.4e-6 to 3.4e-5
+    
+    Wide prior (1e-7 to 3.4e-4) allows data to inform selection strength.
+    
+    - r_loss → 0: Nearly neutral evolution; copy numbers drift upward
+    - r_loss >> r_birth: Strong purging; equilibrium near lower CN
+    - r_loss ≈ r_birth × <fitness>: Approximate equilibrium at observed CN
+
+targetability:
+  description: "Shape parameter of gamma DFE for targetable sites"
+  values: [1,2,5]
+  rationale: |
+    Governs the concentration of targetability (gamma) distribution.
+    
+    Lower values (1): Many sites targetable, few not.
+    Higher values (5): Tighter concentration; most sites have similar targetability.
+    Moderate range (1–5) avoids extreme distributions.
+
+# =============================================================================
+# ABC SAMPLING STRATEGY
+# =============================================================================
+
+n_simulations: 100000
+tolerance_quantile: 0.01  # Accept top 1% (1,000 particles initially)
+
+# Progressive refinement (tolerance sequence ABC)
+tolerance_schedule:
+  stage_1: 0.01   # Top 1% (n_sims=100k → 1k accepted)
+  stage_2: 0.005  # Top 0.5% (n_sims=200k → 1k accepted)
+  stage_3: 0.001  # Top 0.1% (n_sims=500k → 1k accepted)
+
+summary_statistics:
+  - mean_cn
+  - std_cn
+  - median_cn
+  - max_cn
+  - gini_occupancy
+  - lineage_var
+  - n_singletons
+  - max_occupancy
+
+distance_metric: "euclidean_normalized"  # Normalize each stat by observed SD
+
+# =============================================================================
+# POSTERIOR PREDICTIVE VALIDATION
+# =============================================================================
+
+# After ABC, check that posterior simulations produce:
+posterior_checks:
+  median_cn: 
+    observed: 15
+    tolerance: "within [10, 20]"  # Allow ±5
+  
+  cn_range:
+    observed: "[1, 36]"
+    tolerance: "min ≥ 1, max ≤ 50"  # Should span observed range
+  
+  gini_occupancy:
+    rationale: "Quantifies hotspot concentration. Should match empirical pattern."
+  
+  lineage_variance:
+    rationale: "Some lineages have higher CN → should see significant variance"
+    tolerance: "sd(lineage_means) > 0"
+
+# =============================================================================
+# NOTES FOR ABC IMPLEMENTATION
+# =============================================================================
+
+notes: |
+  1. UNITS: r_birth, r_loss are in [1/(per-genome-wide substitution)].
+     Branch lengths in phylogeny must be in same units (per-genome-wide subst).
+  
+  2. STARTING RATE: Use central_estimate for r_birth to check code correctness.
+     If acceptance << 0.01%, widen priors or debug summary stats.
+  
+  3. LINEAGE HETEROGENEITY: Current model assumes uniform DFE and rates 
+     across lineages. Could extend with lineage-specific r_birth or p_neutral.
+  
+  4. TARGETABILITY: Model draws target site preferences from gamma(2, 0.5) 
+     each simulation. This is fixed by prior once DFE is set; could be 
+     alternative ABC parameter if hotspot locations vary.
+  
+  5. IDENTIFIABILITY CONCERNS:
+     - r_birth and r_loss may be difficult to separate if DFE is unknown
+     - p_neutral and gamma_scale are somewhat confounded (both affect threshold)
+     - Expected ABC posterior covariance: use multivariate summary stats
+     (e.g., principal components of occupancy distribution)
