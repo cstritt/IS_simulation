@@ -27,6 +27,11 @@ def load_priors(yaml_path):
 
     with open(yaml_path) as f:
         priors = yaml.safe_load(f)
+        
+    # Make sure that the r_birth and r_loss priors are floats
+    for key in ['r_birth', 'r_loss']:
+        priors[key]['lower'] = float(priors[key]['lower'])
+        priors[key]['upper'] = float(priors[key]['upper'])
 
     return priors
 
