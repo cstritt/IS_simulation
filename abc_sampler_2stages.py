@@ -56,11 +56,6 @@ def load_observed_stats(yaml_path):
         return yaml.safe_load(f)
 
 
-def get_max_occ(priors):
-    """Early-exit occupancy cap, read from priors['max_occ']['value'] if present."""
-    return priors.get('max_occ', {}).get('value')
-
-
 def sample_priors(priors):
     """Sample one particle i.i.d. from the prior box."""
     return {
@@ -122,7 +117,7 @@ def _run_stage1(args):
     Stage 1 worker: simulate and return the mean tip copy number only.
     No summary stats needed -- we're just checking plausibility.
     """
-    sim_id, particle, tree_str, L, initial_copies, max_occ = args
+    sim_id, particle, tree_str, L, initial_copies = args
 
     seed = _worker_seed(sim_id)
     np.random.seed(seed)
@@ -140,7 +135,6 @@ def _run_stage1(args):
             r_birth=particle['r_birth'],
             r_loss=particle['r_loss'],
             initial_copies=initial_copies,
-            max_occ=max_occ,
             seed=seed,
         )
         cn = np.fromiter((occ.sum() for occ in tip_results.values()),dtype=float)
@@ -161,7 +155,7 @@ def _run_stage2(args):
     """
     Stage 2 worker: simulate and return full summary stats for R's abc().
     """
-    sim_id, particle, tree_str, L, tip_names, lineage_map, initial_copies, max_occ = args
+    sim_id, particle, tree_str, L, tip_names, lineage_map, initial_copies = args
 
     seed = _worker_seed(sim_id)
     np.random.seed(seed)
@@ -179,7 +173,6 @@ def _run_stage2(args):
             r_birth=particle['r_birth'],
             r_loss=particle['r_loss'],
             initial_copies=initial_copies,
-            max_occ=max_occ,
             seed=seed,
         )
         stats = niche_model.get_summary_stats(
@@ -214,12 +207,11 @@ def run_abc_sampler(treepath, nsim, priors_path, metadata_path, outdir, n_worker
 
     L             = int(priors['L']['value'])
     initial_copies = int(priors['initial_copies']['value'])
-    max_occ       = get_max_occ(priors)
     n_workers     = _resolve_workers(n_workers)
 
     proposals = [sample_priors(priors) for _ in range(nsim)]
     tasks = [
-        (i, proposals[i], tree_str, L, tip_names, lineage_map, initial_copies, max_occ)
+        (i, proposals[i], tree_str, L, tip_names, lineage_map, initial_copies)
         for i in range(nsim)
     ]
 
@@ -274,7 +266,6 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
 
     L              = int(priors['L']['value'])
     initial_copies = int(priors['initial_copies']['value'])
-    max_occ        = get_max_occ(priors)
     n_workers      = _resolve_workers(n_workers)
 
     s1      = priors['stage1']
@@ -296,7 +287,7 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
 
     proposals1 = [sample_priors(priors) for _ in range(nsim1)]
     tasks1 = [
-        (i, proposals1[i], tree_str, L, initial_copies, max_occ)
+        (i, proposals1[i], tree_str, L, initial_copies)
         for i in range(nsim1)
     ]
 
@@ -379,7 +370,7 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
     proposals2 = [sample_priors(narrow_priors) for _ in range(nsim2)]
     tasks2 = [
         (nsim1 + i, proposals2[i], tree_str, L, tip_names, lineage_map,
-         initial_copies, max_occ)
+         initial_copies)
         for i in range(nsim2)
     ]
 
