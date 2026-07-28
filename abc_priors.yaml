@@ -143,6 +143,23 @@ targetability:
 n_simulations: 100000
 tolerance_quantile: 0.01  # Accept top 1% (1,000 particles initially)
 
+
+# Two-stage ABC
+stage1:
+  n_simulations: 500000
+  bounds:  # roughly +/- 4 times the observed range
+    median_cn:  
+        min: 1
+        max: 40
+    max_cn:
+        min: 5
+        max: 120
+
+stage2:
+  n_simulations: 500000
+
+
+
 # Progressive refinement (tolerance sequence ABC)
 generations:
   - {nsim: 100000, nkeep: 1000}

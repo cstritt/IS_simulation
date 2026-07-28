@@ -74,7 +74,7 @@ def sample_priors(priors):
     }
 
 
-def narrow_bounds(kept_particles, orig_priors, pad_frac=0.2, percentile=98):
+def narrow_bounds(kept_particles, orig_priors, pad_frac=0.3, percentile=95):
     """
     Build a new bounds dict (same shape as orig_priors) by taking the
     [100-percentile, percentile] range of kept_particles, padding by
@@ -143,12 +143,18 @@ def _run_stage1(args):
             max_occ=max_occ,
             seed=seed,
         )
-        mean_cn = np.mean([occ.sum() for occ in tip_results.values()])
-        return (sim_id, particle, float(mean_cn))
+        cn = np.fromiter((occ.sum() for occ in tip_results.values()),dtype=float)
+
+        stats = {
+            "median_cn": float(np.median(cn)),
+            "max_cn": float(cn.max())
+        }
+        
+        return (sim_id, particle, stats)
 
     except Exception as e:
         print(f"[stage1] sim {sim_id} failed: {e}", file=sys.stderr)
-        return (sim_id, particle, np.nan)
+        return (sim_id, particle, None)
 
 
 def _run_stage2(args):
@@ -229,7 +235,7 @@ def run_abc_sampler(treepath, nsim, priors_path, metadata_path, outdir, n_worker
 
 def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
                             metadata_path, outdir,
-                            n_workers=None, pad_frac=0.2, box_percentile=98):
+                            n_workers=None, pad_frac=0.3, box_percentile=95):
     """
     Two-stage ABC:
 
@@ -251,8 +257,8 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
         stage2:
           nsim: 500000
 
-    pad_frac, box_percentile: forwarded to narrow_bounds(). Defaults (0.2,
-    98) trim the 1st/99th percentile of the stage 1 survivors and pad 20%
+    pad_frac, box_percentile: forwarded to narrow_bounds(). Defaults (0.3,
+    95) trim the 1st/99th percentile of the stage 1 survivors and pad 20%
     on each side before clipping to the original prior bounds.
     """
     os.makedirs(outdir, exist_ok=True)
@@ -272,9 +278,14 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
     n_workers      = _resolve_workers(n_workers)
 
     s1      = priors['stage1']
-    nsim1   = int(s1['nsim'])
-    cn_min  = float(s1['cn_min'])
-    cn_max  = float(s1['cn_max'])
+    nsim1   = int(s1['n_simulations'])
+    bounds = s1['bounds']
+    
+    cn_median_min  = float(bounds['median_cn']['min'])
+    cn_median_max = float(bounds['median_cn']['max'])
+    cn_max_min  = float(bounds['max_cn']['min'])
+    cn_max_max = float(bounds['max_cn']['max'])
+
     nsim2   = int(priors['stage2']['nsim'])
 
     # ------------------------------------------------------------------
@@ -289,20 +300,55 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
         for i in range(nsim1)
     ]
 
-    survivors, mean_cns = [], []
+    survivors, stage1_stats = [], []
     with Pool(processes=n_workers) as pool:
-        for _, particle, mean_cn in pool.imap_unordered(_run_stage1, tasks1):
-            if not np.isnan(mean_cn):
-                if cn_min <= mean_cn <= cn_max:
-                    survivors.append(particle)
-                mean_cns.append(mean_cn)
+        for _, particle, stats in pool.imap_unordered(_run_stage1, tasks1):
+            
+            if stats is None:
+                continue
+            
+            median_cn = stats['median_cn']
+            max_cn = stats['max_cn']
+            
+            accepted = (
+                cn_median_min <= median_cn <= cn_median_max and
+                cn_max_min <= max_cn <= cn_max_max
+            )   
 
-    mean_cns = np.array(mean_cns)
-    print(f"[stage 1] {len(survivors)}/{nsim1} survivors "
-          f"(mean CN range across all: [{np.nanmin(mean_cns):.1f}, "
-          f"{np.nanmax(mean_cns):.1f}], "
-          f"kept [{cn_min}, {cn_max}])",
-          file=sys.stderr)
+            stage1_stats.append({
+                "median_cn": median_cn,
+                "max_cn": max_cn,
+                "accepted": accepted
+            })
+            
+            if accepted:
+                survivors.append(particle)
+            
+
+    stage1_df = pd.DataFrame(stage1_stats)
+    acc_rate = 100 * len(survivors) / len(stage1_df)
+
+    print(
+        f"[stage 1] {len(survivors)}/{nsim1} survivors "
+        f"({acc_rate:.1f}%)",
+        file=sys.stderr
+    )
+
+    print(
+        f"  Median CN: "
+        f"simulated [{stage1_df['median_cn'].min():.1f}, "
+        f"{stage1_df['median_cn'].max():.1f}] "
+        f"kept [{cn_median_min}, {cn_median_max}]",
+        file=sys.stderr
+    )
+
+    print(
+        f"  Max CN: "
+        f"simulated [{stage1_df['max_cn'].min():.1f}, "
+        f"{stage1_df['max_cn'].max():.1f}] "
+        f"kept [{cn_max_min}, {cn_max_max}]",
+        file=sys.stderr
+    )
 
     if len(survivors) < 10:
         sys.exit("[stage 1] fewer than 10 survivors -- widen cn_min/cn_max "
@@ -311,7 +357,10 @@ def run_abc_sampler_staged(treepath, priors_path, observed_stats_path,
     # Save stage 1 survivors so you can inspect the narrowed box
     s1_df = pd.DataFrame(survivors, columns=PARAM_COLS)
     s1_df.to_csv(os.path.join(outdir, 'abc_params.stage1.tsv'), sep='\t', index=False)
-
+    
+    # Save stage 1 stats
+    stage1_df.to_csv(os.path.join(outdir, "abc_stage1_stats.tsv"), sep="\t", index=False)
+    
     # Narrow the prior
     new_bounds    = narrow_bounds(survivors, priors, pad_frac, box_percentile)
     narrow_priors = {**priors, **new_bounds}
