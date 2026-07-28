@@ -9,6 +9,32 @@
 #   Median copy number: 15 (range 1–36)
 
 # =============================================================================
+# FIXED PARAMETERS
+# =============================================================================
+
+initial_copies:
+  description: "Initial copy number at the root of the tree"
+  value: 1
+
+L: 
+  description: |
+   Number of niches. Default is the sum of genic and intergenic sites 
+   in the Mycobacterium tuberculosis genome.
+  distribution: "uniform_int"
+  value: 7360
+
+max_occ:
+  description: "Maximum number of IS on a branch"
+  value: 50
+
+cn_cap:
+  description: |
+    Maximum median copy number allowed of a simulated particle. To get rid
+    of extreme CN values.
+  value: 50
+
+
+# =============================================================================
 # GENOMIC NICHE PARAMETERS
 # =============================================================================
 
@@ -118,64 +144,12 @@ n_simulations: 100000
 tolerance_quantile: 0.01  # Accept top 1% (1,000 particles initially)
 
 # Progressive refinement (tolerance sequence ABC)
-tolerance_schedule:
-  stage_1: 0.01   # Top 1% (n_sims=100k → 1k accepted)
-  stage_2: 0.005  # Top 0.5% (n_sims=200k → 1k accepted)
-  stage_3: 0.001  # Top 0.1% (n_sims=500k → 1k accepted)
-
-summary_statistics:
-  - mean_cn
-  - std_cn
-  - median_cn
-  - max_cn
-  - gini_occupancy
-  - lineage_var
-  - n_singletons
-  - max_occupancy
-
-distance_metric: "euclidean_normalized"  # Normalize each stat by observed SD
-
-# =============================================================================
-# POSTERIOR PREDICTIVE VALIDATION
-# =============================================================================
-
-# After ABC, check that posterior simulations produce:
-posterior_checks:
-  median_cn: 
-    observed: 15
-    tolerance: "within [10, 20]"  # Allow ±5
+generations:
+  - {nsim: 100000, nkeep: 1000}
+  - {nsim: 200000, nkeep: 1000}
+  - {nsim: 500000, nkeep: null}
   
-  cn_range:
-    observed: "[1, 36]"
-    tolerance: "min ≥ 1, max ≤ 50"  # Should span observed range
-  
-  gini_occupancy:
-    rationale: "Quantifies hotspot concentration. Should match empirical pattern."
-  
-  lineage_variance:
-    rationale: "Some lineages have higher CN → should see significant variance"
-    tolerance: "sd(lineage_means) > 0"
-
-# =============================================================================
-# NOTES FOR ABC IMPLEMENTATION
-# =============================================================================
-
-notes: |
-  1. UNITS: r_birth, r_loss are in [1/(per-genome-wide substitution)].
-     Branch lengths in phylogeny must be in same units (per-genome-wide subst).
-  
-  2. STARTING RATE: Use central_estimate for r_birth to check code correctness.
-     If acceptance << 0.01%, widen priors or debug summary stats.
-  
-  3. LINEAGE HETEROGENEITY: Current model assumes uniform DFE and rates 
-     across lineages. Could extend with lineage-specific r_birth or p_neutral.
-  
-  4. TARGETABILITY: Model draws target site preferences from gamma(2, 0.5) 
-     each simulation. This is fixed by prior once DFE is set; could be 
-     alternative ABC parameter if hotspot locations vary.
-  
-  5. IDENTIFIABILITY CONCERNS:
-     - r_birth and r_loss may be difficult to separate if DFE is unknown
-     - p_neutral and gamma_scale are somewhat confounded (both affect threshold)
-     - Expected ABC posterior covariance: use multivariate summary stats
-     (e.g., principal components of occupancy distribution)
+smc_stages:
+  stage0: {nsim: 100000, keep_frac: 0.01}
+  stage1: {nsim: 200000, keep_frac: 0.01}
+  stage2: {nsim: 500000, keep_frac: 0.002}

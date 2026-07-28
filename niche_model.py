@@ -40,7 +40,9 @@ def _simulate_branch_numba(occ, branch_length, r_birth, fitness, r_loss, targeta
         occ: occupancy array (0=empty, 1=occupied), shape (L,)
         branch_length: duration of branch (time units)
         r_birth: transposition rate per occupied site (units: 1/time)
-        fitness: fitness effects of each site (shape L,), where fitness[i]=0 => neutral
+        fitness: fitness effects of each site (shape L,); "neutral" sites carry
+            a small positive floor rather than exactly 0 (see
+            create_fitness_landscape), so they remain eligible for loss below
         r_loss: purging rate coefficient (units: 1/time/fitness_unit)
         targetability: insertion preference at each site (shape L,), normalized weights
     
@@ -113,34 +115,38 @@ def _simulate_branch_numba(occ, branch_length, r_birth, fitness, r_loss, targeta
 # Niche space initialization
 # ============================================================================
 
-def create_niche_space(L, p_neutral, gamma_shape, gamma_scale, initial_copies=1):
+def create_fitness_landscape(
+    L, p_neutral, gamma_shape, gamma_scale, neutral_floor_frac=0.01):
     """
-    Create a genomic niche space with fitness effects drawn from DFE.
+    Create a genomic niche space with fitness effects drawn from DFE and 
+    a target site preference array.
     
     Args:
         L: genomic size (number of sites)
         p_neutral: fraction of sites with fitness=0 (neutral)
         gamma_shape: shape parameter of gamma distribution for deleterious sites
         gamma_scale: scale parameter of gamma distribution
-        initial_copies: number of initial occupied sites (randomly chosen)
+        neutral_floor_frac: neutral sites get fitness = neutral_floor_frac *
+            gamma_scale instead of exactly 0. This keeps them clearly
+            distinct from the deleterious DFE (floor is always small relative
+            to gamma_scale) while giving them a small, nonzero loss rate --
+            representing drift/recombination-mediated turnover independent of
+            purifying selection. Without this floor, fitness=0 sites are
+            permanently ineligible for loss (see _simulate_branch_numba),
+            which makes any neutral insertion an irreversible ratchet.
     
     Returns:
-        occ: occupancy array (0=empty, 1=occupied), shape (L,)
         fitness: fitness effect at each site, shape (L,)
+        neutral_mask: boolean array marking neutral sites, shape (L,)
     """
     # Draw fitness effects from gamma for all sites
     fitness = np.random.gamma(gamma_shape, gamma_scale, size=L).astype(np.float32)
 
-    # Set a fraction to be neutral (fitness=0)
+    # Set a fraction to be neutral (small positive floor, not exactly 0 -- see docstring)
     neutral_mask = np.random.rand(L) < p_neutral
-    fitness[neutral_mask] = 0.0
+    fitness[neutral_mask] = neutral_floor_frac * gamma_scale * gamma_shape
 
-    # Initialize occupancy: place initial_copies at random compatible sites
-    occ = np.zeros(L, dtype=np.int8)
-    init_sites = np.random.choice(L, size=min(initial_copies, L), replace=False)
-    occ[init_sites] = 1
-
-    return occ, fitness
+    return fitness, neutral_mask
 
 
 def create_targetability(L, shape=2.0, scale=None):
@@ -194,9 +200,11 @@ def traverse_and_simulate(node, occ, fitness, targetability, params, tip_results
     # Recursively process descendants
     if node.is_leaf():
         tip_results[node.name] = end_occ.copy()
-    else:
-        for child in node.children:
-            traverse_and_simulate(child, end_occ.copy(), fitness, targetability, params, tip_results)
+        return
+
+    # Recursively process descendants
+    for child in node.children:
+        traverse_and_simulate(child, end_occ.copy(), fitness, targetability, params, tip_results)
 
 
 # ============================================================================
@@ -252,9 +260,77 @@ def get_site_frequency_spectrum(mat):
         "singleton_prop": float(singleton_prop),
         "tajimas_d": float(tajimas_d)
     }
+    
+    
+def get_site_frequency_spectrum_binned(mat):
+    """
+    Compute normalized binned site frequency spectrum statistics.
+
+    The returned values are proportions of occupied insertion sites in each
+    frequency class (they sum to 1).
+
+    Bins:
+        1
+        2
+        3
+        4
+        5
+        6-10
+        11-5% of samples
+        5-10% of samples
+        10-25% of samples
+        >25% of samples
+
+    Args:
+        mat: array of shape (n_tips, n_sites) with occupancy {0,1}
+
+    Returns:
+        dict of normalized SFS summary statistics.
+    """
+
+    occupancy = (mat == 1).sum(axis=0)
+    occupancy = occupancy[occupancy > 0]      # occupied sites only
+    n_tips = mat.shape[0]
+
+    # Adaptive bin boundaries
+    b3 = max(20, int(np.ceil(0.05 * n_tips)))
+    b4 = max(b3 + 1, int(np.ceil(0.10 * n_tips)))
+    b5 = max(b4 + 1, int(np.ceil(0.25 * n_tips)))
+
+    stats = {
+        "sfs_1": 0.0,
+        "sfs_2": 0.0,
+        "sfs_3": 0.0,
+        "sfs_4": 0.0,
+        "sfs_5": 0.0,
+        "sfs_6_10": 0.0,
+        "sfs_11_5pct": 0.0,
+        "sfs_5_10pct": 0.0,
+        "sfs_10_25pct": 0.0,
+        "sfs_gt25pct": 0.0,
+    }
+
+    if occupancy.size == 0:
+        return stats
+
+    n_sites = float(occupancy.size)
+
+    stats["sfs_1"] = np.sum(occupancy == 1) / n_sites
+    stats["sfs_2"] = np.sum(occupancy == 2) / n_sites
+    stats["sfs_3"] = np.sum(occupancy == 3) / n_sites
+    stats["sfs_4"] = np.sum(occupancy == 4) / n_sites
+    stats["sfs_5"] = np.sum(occupancy == 5) / n_sites
+
+    stats["sfs_6_10"] = np.sum((occupancy >= 6) & (occupancy <= 10)) / n_sites
+    stats["sfs_11_5pct"] = np.sum((occupancy >= 11) & (occupancy <= b3)) / n_sites
+    stats["sfs_5_10pct"] = np.sum((occupancy > b3) & (occupancy <= b4)) / n_sites
+    stats["sfs_10_25pct"] = np.sum((occupancy > b4) & (occupancy <= b5)) / n_sites
+    stats["sfs_gt25pct"] = np.sum(occupancy > b5) / n_sites
+
+    return stats
 
 
-def get_summary_stats(tip_results, tip_names, lineage_map):
+def get_summary_stats(tip_results, tip_names, lineage_map, mode="simulated"):
     """
     Compute ABC summary statistics from final tip states.
     
@@ -267,10 +343,16 @@ def get_summary_stats(tip_results, tip_names, lineage_map):
         dict of summary statistics
     """
     # Compute copy number per tip
-    cn = np.array([tip_results[name].sum() for name in tip_names], dtype=float)
+    if mode == "simulated":
+        cn = np.array([tip_results[name].sum() for name in tip_names], dtype=float)
+    elif mode == "observed":
+        cn = tip_results
+    else:
+        raise ValueError("mode must be 'simulated' or 'observed'")
 
     # Basic copy number statistics
     stats = {
+        "total_cn": float(cn.sum()),
         "mean_cn": float(cn.mean()),
         "std_cn": float(cn.std(ddof=1)) if len(cn) > 1 else 0.0,
         "min_cn": float(cn.min()),
@@ -302,7 +384,16 @@ def get_summary_stats(tip_results, tip_names, lineage_map):
     # Site occupancy and SFS
     mat = np.vstack([tip_results[name] for name in tip_names])
     occupancy = (mat == 1).sum(axis=0)
-
+    
+    
+    L = occupancy.size
+    n_occupied = np.sum(occupancy > 0)
+    n_empty = L - n_occupied
+    stats["n_occupied_sites"] = int(n_occupied)
+    stats["occupied_fraction"] = n_occupied / L
+    stats["n_empty_sites"] = int(np.sum(occupancy == 0))
+    
+    
     if len(occupancy) > 0 and occupancy.sum() > 0:
         freq = occupancy / len(tip_names)
         stats["gini_occupancy"] = float(_gini(occupancy))
@@ -318,7 +409,7 @@ def get_summary_stats(tip_results, tip_names, lineage_map):
         stats["mean_occupancy"] = 0.0
 
     # Site frequency spectrum
-    sfs = get_site_frequency_spectrum(mat)
+    sfs = get_site_frequency_spectrum_binned(mat)
     stats.update(sfs)
 
     return stats
@@ -328,8 +419,11 @@ def get_summary_stats(tip_results, tip_names, lineage_map):
 # Main simulation routine
 # ============================================================================
 
-def run_simulation(tree, L, p_neutral, gamma_shape, gamma_scale, r_birth, r_loss,
-                   tip_names, lineage_map, seed=None, get_stats=True):
+def run_simulation(
+    tree, L, 
+    p_neutral, gamma_shape, gamma_scale, r_birth, r_loss,
+    initial_copies=1,
+    seed=None):
     """
     Run a single niche model simulation.
     
@@ -340,26 +434,41 @@ def run_simulation(tree, L, p_neutral, gamma_shape, gamma_scale, r_birth, r_loss
         gamma_shape, gamma_scale: DFE parameters
         r_birth: transposition rate
         r_loss: purging strength
-        tip_names: list of tip names
-        lineage_map: dict tip -> lineage
+        initial_copies: number of founder insertions, placed on neutral sites
+            (see create_fitness_landscape) so the simulation isn't decided by
+            the coin flip of whether the single founder happens to land on a
+            deleterious site before the first birth event can occur
         seed: random seed
-        get_stats: whether to compute summary statistics
     
     Returns:
-        (params, cn) if get_stats=False, else (params, cn, stats)
+        tip_results: dict mapping tip name -> occupancy array
     """
-    import time
-    
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
-        
-    # Add runtime to output
-    start_time = time.time()
+
+    # Get tip names from tree
+    tip_names = tree.get_leaf_names()
 
     # Create niche space
-    occ, fitness = create_niche_space(L, p_neutral, gamma_shape, gamma_scale, initial_copies=1)
-    targetability = create_targetability(L, shape=2.0)
+    fitness, neutral_mask = create_fitness_landscape(L, p_neutral, gamma_shape, gamma_scale)
+
+    # Initialize occupancy: founder copies must land on neutral sites, so
+    # that extinction before the first birth event isn't just an artifact of
+    # an unlucky deleterious founder placement
+    occ = np.zeros(L, dtype=int)
+    neutral_sites = np.where(neutral_mask)[0]
+    if len(neutral_sites) < initial_copies:
+        raise ValueError(
+            f"Only {len(neutral_sites)} neutral sites available for "
+            f"{initial_copies} initial founder copies (p_neutral={p_neutral}, L={L})"
+        )
+    init_sites = np.random.choice(neutral_sites, size=initial_copies, replace=False)
+    occ[init_sites] = 1
+    
+    # Don't specify scale, so there are no target site preferences for the moment
+    targetability = create_targetability(L, shape=1.0)
+
 
     # Simulate tree
     root = tree.get_tree_root()
@@ -370,27 +479,8 @@ def run_simulation(tree, L, p_neutral, gamma_shape, gamma_scale, r_birth, r_loss
         tip_results
     )
 
-    # Extract copy numbers
-    cn = np.array([tip_results[name].sum() for name in tip_names], dtype=float)
+    return tip_results
 
-    # Package parameters
-    params = {
-        "p_neutral": p_neutral,
-        "gamma_shape": gamma_shape,
-        "gamma_scale": gamma_scale,
-        "r_birth": r_birth,
-        "r_loss": r_loss
-    }
-    
-    # Add runtime to output
-    end_time = time.time()
-    params["runtime"] = end_time - start_time
-
-    if get_stats:
-        stats = get_summary_stats(tip_results, tip_names, lineage_map)
-        return params, cn, stats
-    else:
-        return params, cn
 
 
 # ============================================================================
@@ -420,20 +510,17 @@ if __name__ == "__main__":
     lineage_map = dict(zip(metadata["GNUMBER"], metadata["LINEAGE_x"]))
 
     # Run simulation
-    params, cn = run_simulation(
+    tip_results = run_simulation(
         tree, args.niches,
         p_neutral=args.p_neutral,
         gamma_shape=args.gamma_shape,
         gamma_scale=args.gamma_scale,
         r_birth=args.r_birth,
         r_loss=args.r_loss,
-        tip_names=tip_names,
-        lineage_map=lineage_map,
         seed=args.seed,
-        get_stats=False
     )
 
     # Output copy numbers
     print("strain\tcopy_number")
-    for name, copy_n in zip(tip_names, cn):
-        print(f"{name}\t{int(copy_n)}")
+    for name in tip_names:
+        print(f"{name}\t{int(tip_results[name].sum())}")
