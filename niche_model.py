@@ -149,7 +149,7 @@ def create_fitness_landscape(
     return fitness, neutral_mask
 
 
-def create_targetability(L, shape=None, scale=None):
+def create_targetability(L, shape=None):
     """
     Create target site preference array (e.g., insertion hotspots).
     
@@ -164,8 +164,7 @@ def create_targetability(L, shape=None, scale=None):
     if shape is None:
         return np.full(L, 1.0 / L, dtype=np.float32)
 
-    if scale is None:
-        scale = 1.0 / shape
+    scale = 1.0 / shape  # doesn't matter because of normalization
 
     t = np.random.gamma(shape, scale, size=L).astype(np.float32)
     t /= t.sum()
@@ -425,7 +424,7 @@ def get_summary_stats(tip_results, tip_names, lineage_map, mode="simulated"):
 def run_simulation(
     tree, L, 
     p_neutral, alpha_fitness, beta_fitness, 
-    alpha_targetability, beta_targetability, 
+    alpha_targetability, 
     r_birth, r_loss,
     initial_copies=1,
     seed=None):
@@ -471,8 +470,8 @@ def run_simulation(
     init_sites = np.random.choice(neutral_sites, size=initial_copies, replace=False)
     occ[init_sites] = 1
     
-    # Don't specify scale, so there are no target site preferences for the moment
-    targetability = create_targetability(L, shape=alpha_targetability, scale=beta_targetability)
+    # shape=None → uniform (no target site preference); shape>0 → gamma heterogeneity
+    targetability = create_targetability(L, shape=alpha_targetability)
 
 
     # Simulate tree
@@ -501,7 +500,6 @@ if __name__ == "__main__":
     parser.add_argument("--alpha_fitness", type=float, required=True, help="DFE shape parameter")
     parser.add_argument("--beta_fitness", type=float, required=True, help="DFE scale parameter")
     parser.add_argument("--alpha_targetability", type=float, required=True, help="Target site preference shape parameter")
-    parser.add_argument("--beta_targetability", type=float, required=True, help="Target site preference scale parameter")
     parser.add_argument("--r_birth", type=float, required=True, help="Transposition rate")
     parser.add_argument("--r_loss", type=float, required=True, help="Purging strength")
     parser.add_argument("--metadata", type=str, required=True, help="Sample metadata (TSV)")
@@ -521,8 +519,7 @@ if __name__ == "__main__":
         p_neutral=args.p_neutral,
         alpha_fitness=args.alpha_fitness,
         beta_fitness=args.beta_fitness,
-        alpha_targetability=args.alpha_fitness,
-        beta_targetability=args.beta_fitness,
+        alpha_targetability=args.alpha_targetability,
         r_birth=args.r_birth,
         r_loss=args.r_loss,
         seed=args.seed,

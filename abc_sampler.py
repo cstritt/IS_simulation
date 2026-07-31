@@ -19,45 +19,58 @@ from ete3 import Tree
 import niche_model
 
 
-PARAM_COLS = ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss']
-LOG_PARAMS  = {'r_birth', 'r_loss'}
+# Model 'basic'            – niche constraints only, uniform targetability
+# Model 'target_site_prefs' – niche constraints + inferred target site heterogeneity
+PARAM_COLS = {
+    'basic':             ['p_neutral', 'alpha_fitness', 'beta_fitness', 'alpha_targetability','r_birth', 'r_loss'],
+    'target_site_prefs': ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss'],
+}
+LOG_PARAMS = {'r_birth', 'r_loss', 'alpha_targetability'}
 
 
 def load_priors(yaml_path):
     import yaml
     with open(yaml_path) as f:
         priors = yaml.safe_load(f)
-    for key in ['r_birth', 'r_loss']:
+    for key in ['r_birth', 'r_loss', 'alpha_targetability']:
         priors[key]['lower'] = float(priors[key]['lower'])
         priors[key]['upper'] = float(priors[key]['upper'])
     return priors
 
 
-def sample_priors(priors):
-    """Sample one particle i.i.d. from the prior box."""
-    return {
+def sample_priors(priors, model):
+    """
+    Sample one particle i.i.d. from the prior box.
+
+    For the 'basic' model, alpha_targetability is set to None so that
+    create_targetability() returns uniform weights (no hotspot structure).
+    For 'target_site_prefs', alpha_targetability is drawn from its prior
+    and recorded as an inferred parameter.
+    """
+    particle = {
         'p_neutral':   random.uniform(
             priors['p_neutral']['lower'],   priors['p_neutral']['upper']
-            ),
+        ),
         'alpha_fitness': random.uniform(
             priors['alpha_fitness']['lower'], priors['alpha_fitness']['upper']
-            ),
+        ),
         'beta_fitness': random.uniform(
             priors['beta_fitness']['lower'], priors['beta_fitness']['upper']
-            ),
-        'alpha_targetability': random.uniform(
-            priors['alpha_targetability']['lower'], priors['alpha_targetability']['upper']
-            ),
-        'beta_targetability': random.uniform(
-            priors['beta_targetability']['lower'], priors['beta_targetability']['upper']
-            ),
+        ),
         'r_birth': np.exp(random.uniform(
             np.log(priors['r_birth']['lower']), np.log(priors['r_birth']['upper']))
-            ),
+        ),
         'r_loss':  np.exp(random.uniform(
             np.log(priors['r_loss']['lower']), np.log(priors['r_loss']['upper']))
-            ),
+        ),
     }
+    if model == 'target_site_prefs':
+        particle['alpha_targetability'] = np.exp(random.uniform(
+            np.log(priors['alpha_targetability']['lower']), np.log(priors['alpha_targetability']['upper']))
+        )
+    else:
+        particle['alpha_targetability'] = None   # → uniform targetability in niche_model
+    return particle
 
 
 def _worker_seed(sim_id):
@@ -81,7 +94,6 @@ def _run_simulation(args):
             alpha_fitness=particle['alpha_fitness'],
             beta_fitness=particle['beta_fitness'],
             alpha_targetability=particle['alpha_targetability'],
-            beta_targetability=particle['beta_targetability'],
             r_birth=particle['r_birth'],
             r_loss=particle['r_loss'],
             initial_copies=initial_copies,
@@ -128,15 +140,8 @@ def run_abc_sampler(treepath, nsim, priors_path, model, metadata_path, outdir, n
     initial_copies = int(priors['initial_copies']['value'])
     n_workers      = _resolve_workers(n_workers)
 
-    proposals = [sample_priors(priors) for _ in range(nsim)]
-    
-    # If model is basic, set uniform targetability
-    if model == 'basic':
-        for i in range(nsim):
-            proposals[i]['alpha_targetability'] = None
-            proposals[i]['beta_targetability']  = None
-    
-    # Run simulations
+    param_cols = PARAM_COLS[model]
+    proposals  = [sample_priors(priors, model) for _ in range(nsim)]
     tasks = [
         (i, proposals[i], tree_str, L, tip_names, lineage_map, initial_copies)
         for i in range(nsim)
@@ -148,7 +153,7 @@ def run_abc_sampler(treepath, nsim, priors_path, model, metadata_path, outdir, n
         for _, particle, stats, mean_cn in pool.imap_unordered(_run_simulation, tasks):
             mean_cns.append(mean_cn)
             if stats is not None:
-                params_list.append([particle[k] for k in PARAM_COLS])
+                params_list.append([particle[k] for k in param_cols])
                 stats_list.append(stats)
 
     # Diagnostic: CN distribution across all simulations
@@ -159,7 +164,7 @@ def run_abc_sampler(treepath, nsim, priors_path, model, metadata_path, outdir, n
           f"median={np.median(valid):.1f}, "
           f"range=[{valid.min():.1f}, {valid.max():.1f}]", file=sys.stderr)
 
-    params_df = pd.DataFrame(params_list, columns=PARAM_COLS)
+    params_df = pd.DataFrame(params_list, columns=param_cols)
     stats_df  = pd.DataFrame(stats_list)
 
     params_path = os.path.join(outdir, 'abc_params.tsv')

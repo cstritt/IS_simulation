@@ -55,22 +55,20 @@ beta_fitness:
 # =============================================================================
 
 alpha_targetability:
-  description: "Shape parameter of gamma DFE for targetable sites"
-  distribution: "uniform"
-  lower: 1
-  upper: 5
+  description: "Shape parameter of gamma distribution for targetable sites"
+  distribution: "uniform_log"
+  lower: 0.3
+  upper: 30
   rationale: |
-    Lower values (1): Many sites targetable, few not.
-    Higher values (5): Tighter concentration; most sites have similar targetability.
-    Moderate range (1–5) avoids extreme distributions.
+    Governs the concentration of targetability (gamma) distribution.
+    
+    Lower values (0.3): Many sites with mild targetability, few highly targetable.
+    Higher values (30): Tighter concentration; most sites have similar targetability.
+    Moderate range (0.3–30) avoids extreme distributions.
+    
+    If gamma_shape=1.0, gamma_scale=0.5 → mean targetability ≈ 0.5 (50% targetable).
+    
 
-beta_targetability:
-  description: "Rate parameter of gamma DFE for targetable sites"
-  distribution: "uniform"
-  lower: 1
-  upper: 5
-  rationale: |
-    ...
 
 
 # =============================================================================
@@ -132,3 +130,11 @@ targetability:
     Lower values (1): Many sites targetable, few not.
     Higher values (5): Tighter concentration; most sites have similar targetability.
     Moderate range (1–5) avoids extreme distributions.
+
+L:
+  description: "Number of genomic sites (default 7178, matching the MTBC0 reference)"
+  value: 7178  # MTBC0 reference
+
+initial_copies:
+  description: "Number of initial copies at the root of the tree"
+  value: 1
