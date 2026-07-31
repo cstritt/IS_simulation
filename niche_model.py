@@ -5,7 +5,7 @@ Niche constraint model for IS6110 with distribution of fitness effects (DFE).
 Core mechanism:
   - Genomic sites have fitness effects drawn from gamma DFE
   - p_neutral: fraction of sites with fitness = 0 (neutral)
-  - gamma_shape, gamma_scale: DFE parameters for deleterious sites
+  - alpha_fitness, beta_fitness: DFE parameters for deleterious sites
   - r_birth: transposition rate per occupied site per unit branch length
   - r_loss: purging rate coefficient per unit fitness effect per branch length
   - Birth events target sites weighted by targetability preferences
@@ -13,8 +13,8 @@ Core mechanism:
 
 Parameters for ABC:
   p_neutral: prob(fitness=0) ~ U(0.1, 0.99)
-  gamma_shape: shape parameter of gamma DFE ~ U(0.5, 3.0)
-  gamma_scale: scale parameter ~ U(0.1, 1.0)
+  alpha_fitness: shape parameter of gamma DFE ~ U(0.5, 3.0)
+  beta_fitness: scale parameter ~ U(0.1, 1.0)
   r_birth: transposition rate ~ U(1000, 10000)
   r_loss: purging strength ~ U(0, 5000)
 """
@@ -116,7 +116,7 @@ def _simulate_branch_numba(occ, branch_length, r_birth, fitness, r_loss, targeta
 # ============================================================================
 
 def create_fitness_landscape(
-    L, p_neutral, gamma_shape, gamma_scale, neutral_floor_frac=0.01):
+    L, p_neutral, alpha_fitness, beta_fitness, neutral_floor_frac=0.01):
     """
     Create a genomic niche space with fitness effects drawn from DFE and 
     a target site preference array.
@@ -124,12 +124,12 @@ def create_fitness_landscape(
     Args:
         L: genomic size (number of sites)
         p_neutral: fraction of sites with fitness=0 (neutral)
-        gamma_shape: shape parameter of gamma distribution for deleterious sites
-        gamma_scale: scale parameter of gamma distribution
+        alpha_fitness: shape parameter of gamma distribution for deleterious sites
+        beta_fitness: scale parameter of gamma distribution
         neutral_floor_frac: neutral sites get fitness = neutral_floor_frac *
-            gamma_scale instead of exactly 0. This keeps them clearly
+            beta_fitness instead of exactly 0. This keeps them clearly
             distinct from the deleterious DFE (floor is always small relative
-            to gamma_scale) while giving them a small, nonzero loss rate --
+            to beta_fitness) while giving them a small, nonzero loss rate --
             representing drift/recombination-mediated turnover independent of
             purifying selection. Without this floor, fitness=0 sites are
             permanently ineligible for loss (see _simulate_branch_numba),
@@ -140,16 +140,16 @@ def create_fitness_landscape(
         neutral_mask: boolean array marking neutral sites, shape (L,)
     """
     # Draw fitness effects from gamma for all sites
-    fitness = np.random.gamma(gamma_shape, gamma_scale, size=L).astype(np.float32)
+    fitness = np.random.gamma(alpha_fitness, beta_fitness, size=L).astype(np.float32)
 
     # Set a fraction to be neutral (small positive floor, not exactly 0 -- see docstring)
     neutral_mask = np.random.rand(L) < p_neutral
-    fitness[neutral_mask] = neutral_floor_frac * gamma_scale * gamma_shape
+    fitness[neutral_mask] = neutral_floor_frac * beta_fitness * alpha_fitness
 
     return fitness, neutral_mask
 
 
-def create_targetability(L, shape=2.0, scale=None):
+def create_targetability(L, shape=None, scale=None):
     """
     Create target site preference array (e.g., insertion hotspots).
     
@@ -161,11 +161,14 @@ def create_targetability(L, shape=2.0, scale=None):
     Returns:
         targetability: weights normalized to sum to 1, shape (L,)
     """
+    if shape is None:
+        return np.full(L, 1.0 / L, dtype=np.float32)
+
     if scale is None:
         scale = 1.0 / shape
 
     t = np.random.gamma(shape, scale, size=L).astype(np.float32)
-    t = t / t.sum()  # normalize to sum=1
+    t /= t.sum()
     return t
 
 
@@ -421,7 +424,9 @@ def get_summary_stats(tip_results, tip_names, lineage_map, mode="simulated"):
 
 def run_simulation(
     tree, L, 
-    p_neutral, gamma_shape, gamma_scale, r_birth, r_loss,
+    p_neutral, alpha_fitness, beta_fitness, 
+    alpha_targetability, beta_targetability, 
+    r_birth, r_loss,
     initial_copies=1,
     seed=None):
     """
@@ -431,7 +436,7 @@ def run_simulation(
         tree: ete3 Tree object
         L: number of genomic sites
         p_neutral: fraction neutral sites
-        gamma_shape, gamma_scale: DFE parameters
+        alpha_fitness, beta_fitness: DFE parameters
         r_birth: transposition rate
         r_loss: purging strength
         initial_copies: number of founder insertions, placed on neutral sites
@@ -451,7 +456,7 @@ def run_simulation(
     tip_names = tree.get_leaf_names()
 
     # Create niche space
-    fitness, neutral_mask = create_fitness_landscape(L, p_neutral, gamma_shape, gamma_scale)
+    fitness, neutral_mask = create_fitness_landscape(L, p_neutral, alpha_fitness, beta_fitness)
 
     # Initialize occupancy: founder copies must land on neutral sites, so
     # that extinction before the first birth event isn't just an artifact of
@@ -467,7 +472,7 @@ def run_simulation(
     occ[init_sites] = 1
     
     # Don't specify scale, so there are no target site preferences for the moment
-    targetability = create_targetability(L, shape=1.0)
+    targetability = create_targetability(L, shape=alpha_targetability, scale=beta_targetability)
 
 
     # Simulate tree
@@ -482,7 +487,6 @@ def run_simulation(
     return tip_results
 
 
-
 # ============================================================================
 # Command-line interface
 # ============================================================================
@@ -494,8 +498,10 @@ if __name__ == "__main__":
     parser.add_argument("--tree", type=str, required=True, help="Newick tree file")
     parser.add_argument("--niches", type=int, required=True, help="Genomic size (number of sites)")
     parser.add_argument("--p_neutral", type=float, required=True, help="Fraction of neutral sites")
-    parser.add_argument("--gamma_shape", type=float, required=True, help="DFE shape parameter")
-    parser.add_argument("--gamma_scale", type=float, required=True, help="DFE scale parameter")
+    parser.add_argument("--alpha_fitness", type=float, required=True, help="DFE shape parameter")
+    parser.add_argument("--beta_fitness", type=float, required=True, help="DFE scale parameter")
+    parser.add_argument("--alpha_targetability", type=float, required=True, help="Target site preference shape parameter")
+    parser.add_argument("--beta_targetability", type=float, required=True, help="Target site preference scale parameter")
     parser.add_argument("--r_birth", type=float, required=True, help="Transposition rate")
     parser.add_argument("--r_loss", type=float, required=True, help="Purging strength")
     parser.add_argument("--metadata", type=str, required=True, help="Sample metadata (TSV)")
@@ -513,8 +519,10 @@ if __name__ == "__main__":
     tip_results = run_simulation(
         tree, args.niches,
         p_neutral=args.p_neutral,
-        gamma_shape=args.gamma_shape,
-        gamma_scale=args.gamma_scale,
+        alpha_fitness=args.alpha_fitness,
+        beta_fitness=args.beta_fitness,
+        alpha_targetability=args.alpha_fitness,
+        beta_targetability=args.beta_fitness,
         r_birth=args.r_birth,
         r_loss=args.r_loss,
         seed=args.seed,

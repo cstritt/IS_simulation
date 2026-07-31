@@ -19,7 +19,7 @@ from ete3 import Tree
 import niche_model
 
 
-PARAM_COLS = ['p_neutral', 'gamma_shape', 'gamma_scale', 'r_birth', 'r_loss']
+PARAM_COLS = ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss']
 LOG_PARAMS  = {'r_birth', 'r_loss'}
 
 
@@ -36,13 +36,27 @@ def load_priors(yaml_path):
 def sample_priors(priors):
     """Sample one particle i.i.d. from the prior box."""
     return {
-        'p_neutral':   random.uniform(priors['p_neutral']['lower'],   priors['p_neutral']['upper']),
-        'gamma_shape': random.uniform(priors['gamma_shape']['lower'], priors['gamma_shape']['upper']),
-        'gamma_scale': random.uniform(priors['gamma_scale']['lower'], priors['gamma_scale']['upper']),
-        'r_birth': np.exp(random.uniform(np.log(priors['r_birth']['lower']),
-                                          np.log(priors['r_birth']['upper']))),
-        'r_loss':  np.exp(random.uniform(np.log(priors['r_loss']['lower']),
-                                          np.log(priors['r_loss']['upper']))),
+        'p_neutral':   random.uniform(
+            priors['p_neutral']['lower'],   priors['p_neutral']['upper']
+            ),
+        'alpha_fitness': random.uniform(
+            priors['alpha_fitness']['lower'], priors['alpha_fitness']['upper']
+            ),
+        'beta_fitness': random.uniform(
+            priors['beta_fitness']['lower'], priors['beta_fitness']['upper']
+            ),
+        'alpha_targetability': random.uniform(
+            priors['alpha_targetability']['lower'], priors['alpha_targetability']['upper']
+            ),
+        'beta_targetability': random.uniform(
+            priors['beta_targetability']['lower'], priors['beta_targetability']['upper']
+            ),
+        'r_birth': np.exp(random.uniform(
+            np.log(priors['r_birth']['lower']), np.log(priors['r_birth']['upper']))
+            ),
+        'r_loss':  np.exp(random.uniform(
+            np.log(priors['r_loss']['lower']), np.log(priors['r_loss']['upper']))
+            ),
     }
 
 
@@ -64,8 +78,10 @@ def _run_simulation(args):
             tree=tree,
             L=L,
             p_neutral=particle['p_neutral'],
-            gamma_shape=particle['gamma_shape'],
-            gamma_scale=particle['gamma_scale'],
+            alpha_fitness=particle['alpha_fitness'],
+            beta_fitness=particle['beta_fitness'],
+            alpha_targetability=particle['alpha_targetability'],
+            beta_targetability=particle['beta_targetability'],
             r_birth=particle['r_birth'],
             r_loss=particle['r_loss'],
             initial_copies=initial_copies,
@@ -92,7 +108,7 @@ def _resolve_workers(n_workers):
     return cpu_count()
 
 
-def run_abc_sampler(treepath, nsim, priors_path, metadata_path, outdir, n_workers=None):
+def run_abc_sampler(treepath, nsim, priors_path, model, metadata_path, outdir, n_workers=None):
     """
     Sample nsim particles from the prior, simulate, compute summary stats,
     write abc_params.tsv and abc_summaries.tsv for R's abc package.
@@ -113,6 +129,14 @@ def run_abc_sampler(treepath, nsim, priors_path, metadata_path, outdir, n_worker
     n_workers      = _resolve_workers(n_workers)
 
     proposals = [sample_priors(priors) for _ in range(nsim)]
+    
+    # If model is basic, set uniform targetability
+    if model == 'basic':
+        for i in range(nsim):
+            proposals[i]['alpha_targetability'] = None
+            proposals[i]['beta_targetability']  = None
+    
+    # Run simulations
     tasks = [
         (i, proposals[i], tree_str, L, tip_names, lineage_map, initial_copies)
         for i in range(nsim)
@@ -149,15 +173,16 @@ def run_abc_sampler(treepath, nsim, priors_path, metadata_path, outdir, n_worker
 def main():
     parser = argparse.ArgumentParser(description="Run ABC simulations for the niche model")
     parser.add_argument("treepath")
-    parser.add_argument("priors",        help="YAML priors file")
+    parser.add_argument("priors", help="YAML priors file")
     parser.add_argument("metadata_path", help="TSV with GNUMBER / LINEAGE_x columns")
-    parser.add_argument("outdir")
-    parser.add_argument("--nsim",      type=int, required=True)
+    parser.add_argument("outdir", help="Output directory")
+    parser.add_argument("--nsim", type=int, required=True, help="Number of simulations")
+    parser.add_argument("--model", choices=['basic', 'target_site_prefs'], default='basic')
     parser.add_argument("--n_workers", type=int, default=None)
     args = parser.parse_args()
 
     params_df, stats_df, params_path, stats_path = run_abc_sampler(
-        args.treepath, args.nsim, args.priors, args.metadata_path,
+        args.treepath, args.nsim, args.priors, args.model, args.metadata_path, 
         args.outdir, n_workers=args.n_workers,
     )
 
