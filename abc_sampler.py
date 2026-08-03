@@ -22,8 +22,8 @@ import niche_model
 # Model 'basic'            – niche constraints only, uniform targetability
 # Model 'target_site_prefs' – niche constraints + inferred target site heterogeneity
 PARAM_COLS = {
-    'basic':             ['p_neutral', 'alpha_fitness', 'beta_fitness', 'alpha_targetability','r_birth', 'r_loss'],
-    'target_site_prefs': ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss'],
+    'basic':             ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss'],
+    'target_site_prefs': ['p_neutral', 'alpha_fitness', 'beta_fitness', 'alpha_targetability', 'r_birth', 'r_loss'],
 }
 LOG_PARAMS = {'r_birth', 'r_loss', 'alpha_targetability'}
 
