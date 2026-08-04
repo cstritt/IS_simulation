@@ -5,7 +5,7 @@ Niche constraint model for IS6110 with distribution of fitness effects (DFE).
 Core mechanism:
   - Genomic sites have fitness effects drawn from gamma DFE
   - p_neutral: fraction of sites with fitness = 0 (neutral)
-  - alpha_fitness, beta_fitness: DFE parameters for deleterious sites
+  - alpha_fitness: DFE parameter for deleterious sites
   - r_birth: transposition rate per occupied site per unit branch length
   - r_loss: purging rate coefficient per unit fitness effect per branch length
   - Birth events target sites weighted by targetability preferences
@@ -14,7 +14,6 @@ Core mechanism:
 Parameters for ABC:
   p_neutral: prob(fitness=0) ~ U(0.1, 0.99)
   alpha_fitness: shape parameter of gamma DFE ~ U(0.5, 3.0)
-  beta_fitness: scale parameter ~ U(0.1, 1.0)
   r_birth: transposition rate ~ U(1000, 10000)
   r_loss: purging strength ~ U(0, 5000)
 """
@@ -116,7 +115,7 @@ def _simulate_branch_numba(occ, branch_length, r_birth, fitness, r_loss, targeta
 # ============================================================================
 
 def create_fitness_landscape(
-    L, p_neutral, alpha_fitness, beta_fitness, neutral_floor_frac=0.01):
+    L, p_neutral, alpha_fitness, neutral_floor_frac=0.01):
     """
     Create a genomic niche space with fitness effects drawn from DFE and 
     a target site preference array.
@@ -125,7 +124,6 @@ def create_fitness_landscape(
         L: genomic size (number of sites)
         p_neutral: fraction of sites with fitness=0 (neutral)
         alpha_fitness: shape parameter of gamma distribution for deleterious sites
-        beta_fitness: scale parameter of gamma distribution
         neutral_floor_frac: neutral sites get fitness = neutral_floor_frac *
             beta_fitness instead of exactly 0. This keeps them clearly
             distinct from the deleterious DFE (floor is always small relative
@@ -140,6 +138,7 @@ def create_fitness_landscape(
         neutral_mask: boolean array marking neutral sites, shape (L,)
     """
     # Draw fitness effects from gamma for all sites
+    beta_fitness = 1/alpha_fitness
     fitness = np.random.gamma(alpha_fitness, beta_fitness, size=L).astype(np.float32)
 
     # Set a fraction to be neutral (small positive floor, not exactly 0 -- see docstring)
@@ -421,7 +420,7 @@ def get_summary_stats(tip_results, tip_names, lineage_map, mode="simulated"):
 
 def run_simulation(
     tree, L, 
-    p_neutral, alpha_fitness, beta_fitness, 
+    p_neutral, alpha_fitness, 
     alpha_targetability, 
     r_birth, r_loss,
     initial_copies=1,
@@ -433,7 +432,7 @@ def run_simulation(
         tree: ete3 Tree object
         L: number of genomic sites
         p_neutral: fraction neutral sites
-        alpha_fitness, beta_fitness: DFE parameters
+        alpha_fitness: DFE parameter
         r_birth: transposition rate
         r_loss: purging strength
         initial_copies: number of founder insertions, placed on neutral sites
@@ -453,7 +452,7 @@ def run_simulation(
     tip_names = tree.get_leaf_names()
 
     # Create niche space
-    fitness, neutral_mask = create_fitness_landscape(L, p_neutral, alpha_fitness, beta_fitness)
+    fitness, neutral_mask = create_fitness_landscape(L, p_neutral, alpha_fitness)
 
     # Initialize occupancy: founder copies must land on neutral sites, so
     # that extinction before the first birth event isn't just an artifact of
@@ -496,7 +495,6 @@ if __name__ == "__main__":
     parser.add_argument("--niches", type=int, required=True, help="Genomic size (number of sites)")
     parser.add_argument("--p_neutral", type=float, required=True, help="Fraction of neutral sites")
     parser.add_argument("--alpha_fitness", type=float, required=True, help="DFE shape parameter")
-    parser.add_argument("--beta_fitness", type=float, required=True, help="DFE scale parameter")
     parser.add_argument("--alpha_targetability", type=float, required=True, help="Target site preference shape parameter")
     parser.add_argument("--r_birth", type=float, required=True, help="Transposition rate")
     parser.add_argument("--r_loss", type=float, required=True, help="Purging strength")
@@ -516,7 +514,6 @@ if __name__ == "__main__":
         tree, args.niches,
         p_neutral=args.p_neutral,
         alpha_fitness=args.alpha_fitness,
-        beta_fitness=args.beta_fitness,
         alpha_targetability=args.alpha_targetability,
         r_birth=args.r_birth,
         r_loss=args.r_loss,

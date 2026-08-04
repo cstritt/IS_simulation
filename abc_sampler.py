@@ -22,8 +22,8 @@ import niche_model
 # Model 'basic'            – niche constraints only, uniform targetability
 # Model 'target_site_prefs' – niche constraints + inferred target site heterogeneity
 PARAM_COLS = {
-    'basic':             ['p_neutral', 'alpha_fitness', 'beta_fitness', 'r_birth', 'r_loss'],
-    'target_site_prefs': ['p_neutral', 'alpha_fitness', 'beta_fitness', 'alpha_targetability', 'r_birth', 'r_loss'],
+    'basic':             ['p_neutral', 'alpha_fitness', 'r_birth', 'r_loss'],
+    'target_site_prefs': ['p_neutral', 'alpha_fitness', 'alpha_targetability', 'r_birth', 'r_loss'],
 }
 LOG_PARAMS = {'r_birth', 'r_loss', 'alpha_targetability'}
 
@@ -53,9 +53,6 @@ def sample_priors(priors, model):
         ),
         'alpha_fitness': random.uniform(
             priors['alpha_fitness']['lower'], priors['alpha_fitness']['upper']
-        ),
-        'beta_fitness': random.uniform(
-            priors['beta_fitness']['lower'], priors['beta_fitness']['upper']
         ),
         'r_birth': np.exp(random.uniform(
             np.log(priors['r_birth']['lower']), np.log(priors['r_birth']['upper']))
@@ -92,7 +89,6 @@ def _run_simulation(args):
             L=L,
             p_neutral=particle['p_neutral'],
             alpha_fitness=particle['alpha_fitness'],
-            beta_fitness=particle['beta_fitness'],
             alpha_targetability=particle['alpha_targetability'],
             r_birth=particle['r_birth'],
             r_loss=particle['r_loss'],
