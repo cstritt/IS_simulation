@@ -16,7 +16,7 @@ p_neutral:
   description: "Fraction of genomic sites where insertions have no fitness cost"
   distribution: "uniform"
   lower: 0.05
-  upper: 0.7
+  upper: 0.25
   rationale: |
     ...
 
@@ -120,16 +120,6 @@ r_loss:
     - r_loss → 0: Nearly neutral evolution; copy numbers drift upward
     - r_loss >> r_birth: Strong purging; equilibrium near lower CN
     - r_loss ≈ r_birth × <fitness>: Approximate equilibrium at observed CN
-
-targetability:
-  description: "Shape parameter of gamma DFE for targetable sites"
-  values: [1,2,5]
-  rationale: |
-    Governs the concentration of targetability (gamma) distribution.
-    
-    Lower values (1): Many sites targetable, few not.
-    Higher values (5): Tighter concentration; most sites have similar targetability.
-    Moderate range (1–5) avoids extreme distributions.
 
 L:
   description: "Number of genomic sites (default 7178, matching the MTBC0 reference)"

@@ -156,7 +156,6 @@ def create_targetability(L, shape=None):
     Args:
         L: size of genome
         shape: gamma shape parameter
-        scale: gamma scale parameter (default: 1/shape for mean=1)
     
     Returns:
         targetability: weights normalized to sum to 1, shape (L,)
@@ -204,7 +203,6 @@ def traverse_and_simulate(node, occ, fitness, targetability, params, tip_results
         tip_results[node.name] = end_occ.copy()
         return
 
-    # Recursively process descendants
     for child in node.children:
         traverse_and_simulate(child, end_occ.copy(), fitness, targetability, params, tip_results)
 
